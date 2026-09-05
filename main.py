@@ -1,13 +1,14 @@
 import os
 import telebot
-import requests
-import json
 import threading
-import time
+import google.generativeai as genai
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_BOT_TOKEN = "8800738451:AAECG3MG16C8HB_ZlMVXFpJ-HMXBArT6UL4"
-GEMINI_API_KEY = "AQ.Ab8RN6LpHZPbGhlY2O_z-70o9r_Giiy77Y9AeMk07K6DbjGfow"
+GEMINI_API_KEY = "AQ.Ab8RN6Kbuwu4ce9SnU5fG-44h7APwgjf72SUImpYQkelhjajWQ"
+
+# Configure Official Google Gemini SDK
+genai.configure(api_key=GEMINI_API_KEY)
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
@@ -56,43 +57,21 @@ SCRIPTWRITING BLUEPRINT:
 Language: Engaging conversational Hindi / Hinglish with Urdu storytelling flair. Professional, serious, and cinematic.
 """
 
-# Multiple fallback models in case one is busy (503)
-MODELS_TO_TRY = [
-    "gemini-1.5-flash",
-    "gemini-flash-latest",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro"
-]
-
 def generate_script_with_gemini(user_input):
-    headers = {
-        "Content-Type": "application/json",
-        "X-goog-api-key": GEMINI_API_KEY
-    }
-    
     prompt_text = f"{SYSTEM_PROMPT}\n\nUSER MOVIE REQUEST OR TRANSCRIPT:\n{user_input}\n\nGenerate the complete master script, visual cues, sound effects, titles, and thumbnail idea now:"
-    payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
     
-    last_error = ""
+    models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-flash-latest"]
     
-    # Try models one by one if Google server has 503 spike
-    for model_name in MODELS_TO_TRY:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+    for m in models:
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=90)
-            if response.status_code == 200:
-                data = response.json()
-                return data["candidates"][0]["content"]["parts"][0]["text"]
-            elif response.status_code == 503:
-                last_error = f"{model_name} busy (503), switching to next model..."
-                time.sleep(1)
-                continue
-            else:
-                last_error = f"Error from {model_name} ({response.status_code}): {response.text}"
+            model = genai.GenerativeModel(m)
+            response = model.generate_content(prompt_text)
+            if response and response.text:
+                return response.text
         except Exception as e:
-            last_error = str(e)
+            continue
             
-    return f"Google servers are under heavy load. Last error: {last_error}"
+    return "Error: Unable to generate script right now. Please verify API key."
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
@@ -100,7 +79,7 @@ def send_welcome(message):
         "🎬 *Namaste! Master Movie Recap Script Bot Ready Hai!*\n\n"
         "Metro me ho ya ghar par, bas mujhe:\n"
         "1. Kisi movie ka naam bhej do, YA\n"
-        "2. Kisi English/Hindi video ka transcript paste kar do.\n\n"
+        "2. Kisi video ka transcript paste kar do.\n\n"
         "Main aapko *MrHindiRockers & The Cinema Book* style me:\n"
         "✅ High-Retention 30s Hook\n"
         "✅ Scene-by-Scene Script + 2-3 sec visual cues\n"
@@ -114,11 +93,10 @@ def send_welcome(message):
 def handle_movie_request(message):
     user_text = message.text
     chat_id = message.chat.id
-    status_msg = bot.reply_to(message, "⏳ Script, SFX cues aur Thumbnail ideas likhe ja rahe hain... (30-45 seconds lagenge, intezaar kijiye)...")
+    status_msg = bot.reply_to(message, "⏳ Master Script likhi ja rahi hai... (30-45 seconds lagenge, intezaar kijiye)...")
     
     script = generate_script_with_gemini(user_text)
     
-    # Split text if longer than Telegram limit (4096 chars)
     if len(script) > 4000:
         chunks = [script[i:i+4000] for i in range(0, len(script), 4000)]
         for idx, chunk in enumerate(chunks):
@@ -135,7 +113,7 @@ def handle_movie_request(message):
         except Exception:
             bot.send_message(chat_id, script)
 
-# Dummy web server for Render Free Web Service
+# Web Server for Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
