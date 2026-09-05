@@ -3,6 +3,7 @@ import telebot
 import requests
 import json
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 TELEGRAM_BOT_TOKEN = "8800738451:AAECG3MG16C8HB_ZlMVXFpJ-HMXBArT6UL4"
@@ -55,9 +56,15 @@ SCRIPTWRITING BLUEPRINT:
 Language: Engaging conversational Hindi / Hinglish with Urdu storytelling flair. Professional, serious, and cinematic.
 """
 
+# Multiple fallback models in case one is busy (503)
+MODELS_TO_TRY = [
+    "gemini-1.5-flash",
+    "gemini-flash-latest",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro"
+]
+
 def generate_script_with_gemini(user_input):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
-    
     headers = {
         "Content-Type": "application/json",
         "X-goog-api-key": GEMINI_API_KEY
@@ -66,15 +73,26 @@ def generate_script_with_gemini(user_input):
     prompt_text = f"{SYSTEM_PROMPT}\n\nUSER MOVIE REQUEST OR TRANSCRIPT:\n{user_input}\n\nGenerate the complete master script, visual cues, sound effects, titles, and thumbnail idea now:"
     payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
     
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=90)
-        if response.status_code == 200:
-            data = response.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            return f"Error from Gemini API ({response.status_code}): {response.text}"
-    except Exception as e:
-        return f"Request failed: {str(e)}"
+    last_error = ""
+    
+    # Try models one by one if Google server has 503 spike
+    for model_name in MODELS_TO_TRY:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=90)
+            if response.status_code == 200:
+                data = response.json()
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            elif response.status_code == 503:
+                last_error = f"{model_name} busy (503), switching to next model..."
+                time.sleep(1)
+                continue
+            else:
+                last_error = f"Error from {model_name} ({response.status_code}): {response.text}"
+        except Exception as e:
+            last_error = str(e)
+            
+    return f"Google servers are under heavy load. Last error: {last_error}"
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
@@ -96,11 +114,11 @@ def send_welcome(message):
 def handle_movie_request(message):
     user_text = message.text
     chat_id = message.chat.id
-    status_msg = bot.reply_to(message, "⏳ Script, SFX cues aur Thumbnail ideas likhe ja rahe hain... (Lagbhag 30-45 seconds lagenge, intezaar kijiye)...")
+    status_msg = bot.reply_to(message, "⏳ Script, SFX cues aur Thumbnail ideas likhe ja rahe hain... (30-45 seconds lagenge, intezaar kijiye)...")
     
     script = generate_script_with_gemini(user_text)
     
-    # Split text if longer than Telegram limit
+    # Split text if longer than Telegram limit (4096 chars)
     if len(script) > 4000:
         chunks = [script[i:i+4000] for i in range(0, len(script), 4000)]
         for idx, chunk in enumerate(chunks):
